@@ -1,5 +1,5 @@
 Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
-
+    
     /*
     UTILS
     */
@@ -14,6 +14,7 @@ Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
     NUBEFACT_UNITS = {"goods":"NIU","service":"ZZ"};
     DOC_VALIDATIONS = {"RUC":11,"DNI":8};
     SUNAT_TYPE_TRANSACTIONS = {"VENTA INTERNA":1,"OPERACIÓN SUJETA A DETRACCIÓN":30};
+    n = zoho.encryption.urlDecode("%0A");
     //TO REVIEW DETRACCIONES: https://orientacion.sunat.gob.pe/sites/default/files/inline-files/Cartilla_detracciones.pdf
     DETRACCIONES = {"Intermediación laboral y tercerización | %12":{"type":12,"percentage":0.12},"Arrendamiento de bienes | %10":{"type":17,"percentage":0.10},"Mantenimiento y reparación de bienes muebles | %12":{"type":18,"percentage":0.12},"Movimiento de carga | %10":{"type":19,"percentage":0.10},"Otros servicios empresariales | %12":{"type":20,"percentage":0.12},"Comisión mercantil | %10":{"type":22,"percentage":0.10},"Fabricación de bienes por encargo | %10":{"type":23,"percentage":0.10},"Servicio de transporte de personas | %10":{"type":24,"percentage":0.10},"Contratos de construcción | %4":{"type":28,"percentage":0.04},"Demás servicios gravados con el IGV | %12":{"type":35,"percentage":0.12}};
     RETENCIONES = {"TASA 3%":{"type":1,"percentage":0.03},"TASA 6%":{"type":2,"percentage":0.06}};
@@ -51,7 +52,7 @@ Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
             retencion_total = 0;
             if(custom_field_hash.containKey("cf_transaccion_sunat"))
             {
-                if(custom_field_hash.get("cf_observaciones_de_la_factura"))
+                if(custom_field_hash.containKey("cf_observaciones_de_la_factura"))
                 {
                     observations = custom_field_hash.get("cf_observaciones_de_la_factura");
                 }
@@ -64,11 +65,14 @@ Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
                 if(custom_field_hash.containKey("cf_tipo_de_detraccion"))
                 {
                     detraccion_type = DETRACCIONES.get(custom_field_hash.get("cf_tipo_de_detraccion")).get("type");
+                    //For calculation purposes
                     detraccion_total = total * DETRACCIONES.get(custom_field_hash.get("cf_tipo_de_detraccion")).get("percentage");
+                    //Detraccion is always in soles (PEN)
+                    detraccion_total_pen = total * DETRACCIONES.get(custom_field_hash.get("cf_tipo_de_detraccion")).get("percentage") * exchange_rate;
                     info "detraccion_type: " + detraccion_type;
                     info "detraccion_total: " + detraccion_total;
                     to_nubefact.put("detraccion",true);
-                    to_nubefact.put("detraccion_total",detraccion_total);
+                    to_nubefact.put("detraccion_total",detraccion_total_pen);
                     to_nubefact.put("medio_de_pago_detraccion",1);
                 }
                 if(custom_field_hash.containKey("cf_tipo_de_retencion"))
@@ -187,6 +191,7 @@ Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
                         nubefact_client_code = NUBEFACT_DOC_TYPES.get(document_type);
                         nubefact_tx_type = NUBEFACT_TX_TYPES.get(transaction_type);
                         nubefact_unique_Code = transaction_type + " | " + invoice_id;
+                        total_net = total - detraccion_total - retencion_total;
                         // 			total_tax = (sub_total - total_discount) * 0.18;
                         //
                         to_nubefact.put("operacion","generar_comprobante");
@@ -254,11 +259,12 @@ Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
                             custom_fields.add({"value":transaction_type,"label":"Tipo de transacción"});
                             custom_fields.add({"value":sunat_status,"label":"Aceptada por SUNAT"});
                             custom_fields.add({"value":sunat_description,"label":"Descripción de la SUNAT"});
-                            custom_fields.add({"value":retencion_total.round(2),"label":"Detracción"});
-                            custom_fields.add({"value":detraccion_total.round(2),"label":"Retención"});
+                            custom_fields.add({"value":detraccion_total_pen.round(2),"label":"Detracción"});
+                            custom_fields.add({"value":retencion_total.round(2),"label":"Retención"});
                             custom_fields.add({"value":currency_symbol,"label":"Moneda"});
                             to_invoice.put("invoice_number",nubefact_serie + "-" + nubefact_number);
                             to_invoice.put("custom_fields",custom_fields);
+                            to_invoice.put("notes","Información del crédito: " + n + n + "Total de cuotas: 1" + n + "Fec. Vencimiento: " + due_date + n + "Monto neto pendiente de pago: " + currency_symbol + total_net.round(2));
                             update_response = zoho.books.updateRecord("invoices",ORG_ID,invoice_id,to_invoice,"zbooks_all");
                             info "update_response: " + update_response;
                             if(update_response.get("code") == 0)
