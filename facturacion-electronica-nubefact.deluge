@@ -1,0 +1,324 @@
+Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
+
+    /*
+    UTILS
+    */
+    URL_NUBEFACT = "https://api.nubefact.com/api/v1/eff0fd43-3999-490a-a784-875ad272de19";
+    TOKEN_NUBEFACT = "80181831b1bf47ccb23bad527ffef0a3bcf1be00c003478db6b2d947307a0f3f";
+    ORG_ID = organization.get("organization_id");
+    BOLETA = {"serie":"BBB1"};
+    FACTURA = {"serie":"FFF1"};
+    NUBEFACT_DOC_TYPES = {"RUC":6,"DNI":1,"CARNET DE EXTRANJERÍA":4,"PASAPORTE":7};
+    NUBEFACT_TX_TYPES = {"FACTURA":1,"BOLETA":2};
+    NUBEFACT_CURRENCIES = {"PEN":1,"USD":2};
+    NUBEFACT_UNITS = {"goods":"NIU","service":"ZZ"};
+    DOC_VALIDATIONS = {"RUC":11,"DNI":8};
+    SUNAT_TYPE_TRANSACTIONS = {"VENTA INTERNA":1,"OPERACIÓN SUJETA A DETRACCIÓN":30};
+    //TO REVIEW DETRACCIONES: https://orientacion.sunat.gob.pe/sites/default/files/inline-files/Cartilla_detracciones.pdf
+    DETRACCIONES = {"Intermediación laboral y tercerización | %12":{"type":12,"percentage":0.12},"Arrendamiento de bienes | %10":{"type":17,"percentage":0.10},"Mantenimiento y reparación de bienes muebles | %12":{"type":18,"percentage":0.12},"Movimiento de carga | %10":{"type":19,"percentage":0.10},"Otros servicios empresariales | %12":{"type":20,"percentage":0.12},"Comisión mercantil | %10":{"type":22,"percentage":0.10},"Fabricación de bienes por encargo | %10":{"type":23,"percentage":0.10},"Servicio de transporte de personas | %10":{"type":24,"percentage":0.10},"Contratos de construcción | %4":{"type":28,"percentage":0.04},"Demás servicios gravados con el IGV | %12":{"type":35,"percentage":0.12}};
+    RETENCIONES = {"TASA 3%":{"type":1,"percentage":0.03},"TASA 6%":{"type":2,"percentage":0.06}};
+    USER_RESPONSE = Map();
+    USER_RESPONSE.put("message","Init");
+    USER_RESPONSE.put("code",0);
+    USER_RESPONSE.put("ERROR",false);
+    to_nubefact = Map();
+    /*
+    **
+    */
+    bulk_invoice = zoho.books.getRecordsByID("invoices",ORG_ID,invoice.get("invoice_id"),"zbooks_all");
+    info "bulk_invoice: " + bulk_invoice;
+    if(bulk_invoice.get("code") == 0)
+    {
+        invoice = bulk_invoice.get("invoice");
+        //ONLY SEND INVOICE TO NUBEFACT WHEN IS APPROVED IN ZOHO BOOKS
+        if(invoice.get("approvers_list").size() > 0)
+        {
+            invoice_id = invoice.get("invoice_id");
+            invoice_number = invoice.get("invoice_number");
+            custom_field_hash = invoice.get("custom_field_hash");
+            due_date = invoice.get("due_date").toString("dd-MM-YYYY");
+            issued_date = invoice.get("date").toString("dd-MM-YYYY");
+            exchange_rate = invoice.get("exchange_rate").round(3);
+            payment_terms = invoice.get("payment_terms_label");
+            total_discount = invoice.get("discount_amount");
+            currency_symbol = invoice.get("currency_symbol");
+            currency_code = invoice.get("currency_code");
+            customer_id = invoice.get("customer_id");
+            line_items = invoice.get("line_items");
+            sub_total = invoice.get("sub_total");
+            total = invoice.get("total");
+            detraccion_total = 0;
+            retencion_total = 0;
+            if(custom_field_hash.containKey("cf_transaccion_sunat"))
+            {
+                if(custom_field_hash.get("cf_observaciones_de_la_factura"))
+                {
+                    observations = custom_field_hash.get("cf_observaciones_de_la_factura");
+                }
+                sunat_transaction_code = SUNAT_TYPE_TRANSACTIONS.get(custom_field_hash.get("cf_transaccion_sunat"));
+                //RETENCION AND DETRACCION PROCESS
+                /*
+                    If retencion is added with or without detraccion, sunat_transaction must be VENTA INTERNA
+                    If retencion is not added but detraccion is, sunat_transaction must bE OPERACION SUJETA A DESTRACCION
+                */
+                if(custom_field_hash.containKey("cf_tipo_de_detraccion"))
+                {
+                    detraccion_type = DETRACCIONES.get(custom_field_hash.get("cf_tipo_de_detraccion")).get("type");
+                    detraccion_total = total * DETRACCIONES.get(custom_field_hash.get("cf_tipo_de_detraccion")).get("percentage");
+                    info "detraccion_type: " + detraccion_type;
+                    info "detraccion_total: " + detraccion_total;
+                    to_nubefact.put("detraccion",true);
+                    to_nubefact.put("detraccion_total",detraccion_total);
+                    to_nubefact.put("medio_de_pago_detraccion",1);
+                }
+                if(custom_field_hash.containKey("cf_tipo_de_retencion"))
+                {
+                    //VENTA INTERNA 
+                    retencion_type = RETENCIONES.get(custom_field_hash.get("cf_tipo_de_retencion")).get("type");
+                    retencion_total = total * RETENCIONES.get(custom_field_hash.get("cf_tipo_de_retencion")).get("percentage");
+                    info "retencion_type: " + retencion_type;
+                    info "retencion_total: " + retencion_total;
+                    to_nubefact.put("retencion_tipo",retencion_type);
+                    to_nubefact.put("total_retencion",retencion_total);
+                    to_nubefact.put("retencion_base_imponible",total);
+                }
+                else
+                {
+                    to_nubefact.put("detraccion_tipo",detraccion_type);
+                }
+                //GET CUSTOMER DETAILS
+                bulk_customer = zoho.books.getRecordsByID("contacts",ORG_ID,customer_id,"zbooks_all");
+                if(bulk_customer.get("code") == 0)
+                {
+                    customer = bulk_customer.get("contact");
+                    info "customer: " + customer;
+                    //Field: Nombre de contacto para mostrar
+                    contact_name = customer.get("contact_name");
+                    //Field: Nombre de la empresa
+                    company_name = customer.get("company_name");
+                    customer_email = customer.get("email");
+                    customer_phone = customer.get("phone");
+                    customer_billing_address = customer.get("billing_address");
+                    customer_address = customer_billing_address.get("address");
+                    if(customer.containKey("cf_tipo_de_documento") && customer.containKey("cf_numero_de_documento"))
+                    {
+                        document_type = customer.get("cf_tipo_de_documento");
+                        document_number = customer.get("cf_numero_de_documento");
+                        if(document_type == "RUC")
+                        {
+                            if(DOC_VALIDATIONS.get(document_type) == document_number.len())
+                            {
+                                transaction_type = "FACTURA";
+                                prefix = FACTURA.get("serie");
+                            }
+                            else
+                            {
+                                USER_RESPONSE.put("message","ERROR: El RUC no tiene la cantidad correcta de dígitos, por favor revíselo de nuevo.");
+                                USER_RESPONSE.put("code",1);
+                                USER_RESPONSE.put("ERROR",true);
+                            }
+                        }
+                        else
+                        {
+                            if(document_type == "DNI")
+                            {
+                                if(DOC_VALIDATIONS.get(document_type) != document_number.len())
+                                {
+                                    USER_RESPONSE.put("message","ERROR: El DNI no tiene la cantidad correcta de dígitos, por favor revíselo de nuevo.");
+                                    USER_RESPONSE.put("code",1);
+                                    USER_RESPONSE.put("ERROR",true);
+                                }
+                            }
+                            transaction_type = "BOLETA";
+                            prefix = BOLETA.get("serie");
+                        }
+                        if(customer_address.isNull() || customer_address == "")
+                        {
+                            USER_RESPONSE.put("message","ERROR: El cliente no tiene una dirección de facturación establecida");
+                            USER_RESPONSE.put("code",1);
+                            USER_RESPONSE.put("ERROR",true);
+                        }
+                    }
+                    else
+                    {
+                        USER_RESPONSE.put("message","ERROR: El cliente no tiene un tipo o número de documento establecido");
+                        USER_RESPONSE.put("code",1);
+                        USER_RESPONSE.put("ERROR",true);
+                    }
+                    //PROCESS LINE ITEMS
+                    if(!USER_RESPONSE.get("ERROR"))
+                    {
+                        info "NO ERRORS SO FAR";
+                        nubefact_line_items = List();
+                        total_tax = 0;
+                        for each  line_item in line_items
+                        {
+                            nubefact_line_item = Map();
+                            bulk_item = zoho.inventory.getRecordsByID("items",ORG_ID,line_item.get("item_id"),"zinventory_all");
+                            if(bulk_item.get("code") == 0)
+                            {
+                                item = bulk_item.get("item");
+                                product_type = item.get("product_type");
+                                nubefact_item_unit = NUBEFACT_UNITS.get(product_type);
+                                item_code = item.get("custom_field_hash").get("cf_codigo_interno");
+                            }
+                            tax_percentage = line_item.get("tax_percentage") / 100;
+                            total_tax = total_tax + line_item.get("item_total") * tax_percentage;
+                            nubefact_line_item.put("codigo",item_code);
+                            //codigo sunat [10000000]: Material Vivo Vegetal y Animal, Accesorios y Suministros
+                            nubefact_line_item.put("codigo_producto_sunat","10000000");
+                            nubefact_line_item.put("descripcion",line_item.get("name"));
+                            nubefact_line_item.put("cantidad",line_item.get("quantity"));
+                            nubefact_line_item.put("valor_unitario",line_item.get("rate"));
+                            nubefact_line_item.put("precio_unitario",line_item.get("rate") * (1 + tax_percentage));
+                            nubefact_line_item.put("descuento",line_item.get("discount_amount"));
+                            nubefact_line_item.put("subtotal",line_item.get("item_total"));
+                            nubefact_line_item.put("igv",line_item.get("item_total") * tax_percentage);
+                            //tipo igv [1]: Gravado - Operación Onerosa
+                            nubefact_line_item.put("tipo_de_igv",1);
+                            nubefact_line_item.put("total",line_item.get("item_total") + tax_percentage * line_item.get("item_total"));
+                            nubefact_line_item.put("anticipo_regularizacion",false);
+                            nubefact_line_item.put("unidad_de_medida",nubefact_item_unit);
+                            nubefact_line_items.add(nubefact_line_item);
+                        }
+                        info "nubefact_line_items: " + nubefact_line_items;
+                        //
+                        nubefact_currency_code = NUBEFACT_CURRENCIES.get(currency_code);
+                        nubefact_client_code = NUBEFACT_DOC_TYPES.get(document_type);
+                        nubefact_tx_type = NUBEFACT_TX_TYPES.get(transaction_type);
+                        nubefact_unique_Code = transaction_type + " | " + invoice_id;
+                        // 			total_tax = (sub_total - total_discount) * 0.18;
+                        //
+                        to_nubefact.put("operacion","generar_comprobante");
+                        to_nubefact.put("tipo_de_comprobante",nubefact_tx_type);
+                        to_nubefact.put("sunat_transaction",sunat_transaction_code);
+                        to_nubefact.put("cliente_tipo_de_documento",nubefact_client_code);
+                        to_nubefact.put("cliente_denominacion",company_name);
+                        to_nubefact.put("cliente_direccion",customer_address);
+                        to_nubefact.put("cliente_email",customer_email);
+                        to_nubefact.put("cliente_numero_de_documento",document_number);
+                        to_nubefact.put("items",nubefact_line_items);
+                        to_nubefact.put("moneda",nubefact_currency_code);
+                        to_nubefact.put("porcentaje_de_igv",18);
+                        to_nubefact.put("total_descuento",total_discount);
+                        to_nubefact.put("descuento_global",total_discount);
+                        to_nubefact.put("total_gravada",sub_total);
+                        to_nubefact.put("total_igv",total_tax);
+                        to_nubefact.put("total",total);
+                        to_nubefact.put("serie",prefix);
+                        to_nubefact.put("numero","");
+                        to_nubefact.put("codigo_unico",nubefact_unique_Code);
+                        to_nubefact.put("condiciones_de_pago",payment_terms);
+                        to_nubefact.put("fecha_de_emision",issued_date);
+                        to_nubefact.put("fecha_de_vencimiento",due_date);
+                        to_nubefact.put("enviar_automaticamente_a_la_sunat",true);
+                        to_nubefact.put("enviar_automaticamente_al_cliente",false);
+                        to_nubefact.put("tipo_de_cambio",exchange_rate);
+                        to_nubefact.put("medio_de_pago","venta_al_credito");
+                        to_nubefact.put("observaciones",observations);
+                        credit_item = Map();
+                        credit_items = List();
+                        credit_item.put("cuota",1);
+                        credit_item.put("fecha_de_pago",due_date);
+                        credit_item.put("importe",total - detraccion_total - retencion_total);
+                        credit_items.add(credit_item);
+                        to_nubefact.put("venta_al_credito",credit_items);
+                        header = Map();
+                        header.put("Authorization",TOKEN_NUBEFACT);
+                        header.put("Content-Type","application/json");
+                        info "to_nubefact: " + to_nubefact;
+                        response_nubefact = invokeurl
+                        [
+                            url :URL_NUBEFACT
+                            type :POST
+                            parameters:to_nubefact.toString()
+                            headers:header
+                        ];
+                        info "response_nubefact: " + response_nubefact;
+                        if(!response_nubefact.containKey("errors"))
+                        {
+                            to_invoice = Map();
+                            custom_fields = List();
+                            nubefact_serie = response_nubefact.get("serie");
+                            nubefact_number = response_nubefact.get("numero");
+                            nubefact_tx_pdf = response_nubefact.get("enlace_del_pdf");
+                            nubefact_tx_xml = response_nubefact.get("enlace_del_xml");
+                            sunat_status = response_nubefact.get("aceptada_por_sunat");
+                            sunat_description = ifnull(response_nubefact.get("sunat_description"),"");
+                            //
+                            custom_fields.add({"value":true,"label":"Facturado"});
+                            custom_fields.add({"value":nubefact_serie,"label":"Serie"});
+                            custom_fields.add({"value":nubefact_tx_pdf,"label":"PDF Nubefact"});
+                            custom_fields.add({"value":nubefact_tx_xml,"label":"XML Nubefact"});
+                            custom_fields.add({"value":nubefact_number,"label":"Número Correlativo"});
+                            custom_fields.add({"value":transaction_type,"label":"Tipo de transacción"});
+                            custom_fields.add({"value":sunat_status,"label":"Aceptada por SUNAT"});
+                            custom_fields.add({"value":sunat_description,"label":"Descripción de la SUNAT"});
+                            custom_fields.add({"value":retencion_total.round(2),"label":"Detracción"});
+                            custom_fields.add({"value":detraccion_total.round(2),"label":"Retención"});
+                            custom_fields.add({"value":currency_symbol,"label":"Moneda"});
+                            to_invoice.put("invoice_number",nubefact_serie + "-" + nubefact_number);
+                            to_invoice.put("custom_fields",custom_fields);
+                            update_response = zoho.books.updateRecord("invoices",ORG_ID,invoice_id,to_invoice,"zbooks_all");
+                            info "update_response: " + update_response;
+                            if(update_response.get("code") == 0)
+                            {
+                                //Attaching XML to invoice
+                                invoice_xml = nubefact_tx_xml.toFile(nubefact_serie + "-" + nubefact_number + ".xml");
+                                invoice_xml.setParamName("attachment");
+                                api_url = "https://books.zoho.com/api/v3/invoices/" + invoice_id + "/attachment?can_send_in_mail=true&organization_id=" + ORG_ID;
+                                response_xml = invokeurl
+                                [
+                                    url :api_url
+                                    type :POST
+                                    files:invoice_xml
+                                    connection:"zbooks_all"
+                                ];
+                                info "response_xml: " + response_xml;
+                                USER_RESPONSE.put("message","La " + transaction_type.toLowerCase() + " se ha Enviando a la SUNAT correctamente");
+                            }
+                            else
+                            {
+                                USER_RESPONSE.put("message","ERROR: No se pudo actualizar la información de la factura, por favor contacte con el desarrollador");
+                                USER_RESPONSE.put("code",1);
+                                USER_RESPONSE.put("ERROR",true);
+                            }
+                        }
+                        else
+                        {
+                            USER_RESPONSE.put("message",response_nubefact.get("errors"));
+                            USER_RESPONSE.put("code",response_nubefact.get("codigo"));
+                            USER_RESPONSE.put("ERROR",true);
+                        }
+                    }
+                }
+                else
+                {
+                    USER_RESPONSE.put("message","ERROR: No se pudo extraer la información del cliente, por favor contacte con el desarrollador");
+                    USER_RESPONSE.put("code",1);
+                    USER_RESPONSE.put("ERROR",true);
+                }
+            }
+            else
+            {
+                USER_RESPONSE.put("message","ERROR: Es requerido agregar el campo transacción SUNAT");
+                USER_RESPONSE.put("code",1);
+                USER_RESPONSE.put("ERROR",true);
+            }
+        }
+        else
+        {
+            USER_RESPONSE.put("message","ERROR: No se puede enviar el documento a la SUNAT ya que no se ha aprobado.");
+            USER_RESPONSE.put("code",1);
+            USER_RESPONSE.put("ERROR",true);
+        }
+    }
+    else
+    {
+        USER_RESPONSE.put("message","ERROR: No se pudo extraer la información de la factura, por favor contacte con el desarrollador");
+        USER_RESPONSE.put("code",1);
+        USER_RESPONSE.put("ERROR",true);
+    }
+    return USER_RESPONSE;
+ 
+}
