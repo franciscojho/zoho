@@ -16,13 +16,16 @@ Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
     SUNAT_TYPE_TRANSACTIONS = {"VENTA INTERNA":1,"OPERACIÓN SUJETA A DETRACCIÓN":30};
     n = zoho.encryption.urlDecode("%0A");
     //TO REVIEW DETRACCIONES: https://orientacion.sunat.gob.pe/sites/default/files/inline-files/Cartilla_detracciones.pdf
-    DETRACCIONES = {"Intermediación laboral y tercerización | %12":{"type":12,"percentage":0.12},"Arrendamiento de bienes | %10":{"type":17,"percentage":0.10},"Mantenimiento y reparación de bienes muebles | %12":{"type":18,"percentage":0.12},"Movimiento de carga | %10":{"type":19,"percentage":0.10},"Otros servicios empresariales | %12":{"type":20,"percentage":0.12},"Comisión mercantil | %10":{"type":22,"percentage":0.10},"Fabricación de bienes por encargo | %10":{"type":23,"percentage":0.10},"Servicio de transporte de personas | %10":{"type":24,"percentage":0.10},"Contratos de construcción | %4":{"type":28,"percentage":0.04},"Demás servicios gravados con el IGV | %12":{"type":35,"percentage":0.12}};
+    DETRACCIONES = {"Intermediación laboral y tercerización | 12%":{"type":12,"percentage":0.12},"Arrendamiento de bienes | 10%":{"type":17,"percentage":0.10},"Mantenimiento y reparación de bienes muebles | 12%":{"type":18,"percentage":0.12},"Movimiento de carga | 10%":{"type":19,"percentage":0.10},"Otros servicios empresariales | 12%":{"type":20,"percentage":0.12},"Comisión mercantil | 10%":{"type":22,"percentage":0.10},"Fabricación de bienes por encargo | 10%":{"type":23,"percentage":0.10},"Servicio de transporte de personas | 10%":{"type":24,"percentage":0.10},"Contratos de construcción | 4%":{"type":28,"percentage":0.04},"Demás servicios gravados con el IGV | 12%":{"type":35,"percentage":0.12}};
     RETENCIONES = {"TASA 3%":{"type":1,"percentage":0.03},"TASA 6%":{"type":2,"percentage":0.06}};
     USER_RESPONSE = Map();
     USER_RESPONSE.put("message","Init");
     USER_RESPONSE.put("code",0);
     USER_RESPONSE.put("ERROR",false);
     to_nubefact = Map();
+    detraccion_total_pen = 0;
+    detraccion_total = 0;
+    retencion_total = 0;
     /*
     **
     */
@@ -48,8 +51,6 @@ Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
             line_items = invoice.get("line_items");
             sub_total = invoice.get("sub_total");
             total = invoice.get("total");
-            detraccion_total = 0;
-            retencion_total = 0;
             if(custom_field_hash.containKey("cf_transaccion_sunat"))
             {
                 if(custom_field_hash.containKey("cf_observaciones_de_la_factura"))
@@ -190,7 +191,8 @@ Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
                         nubefact_currency_code = NUBEFACT_CURRENCIES.get(currency_code);
                         nubefact_client_code = NUBEFACT_DOC_TYPES.get(document_type);
                         nubefact_tx_type = NUBEFACT_TX_TYPES.get(transaction_type);
-                        nubefact_unique_Code = transaction_type + " | " + invoice_id;
+                        nubefact_unique_Code = transaction_type + " | " + invoice_id + " | " + zoho.currenttime.toNumber();
+                        info "nubefact_unique_Code: " + nubefact_unique_Code;
                         total_net = total - detraccion_total - retencion_total;
                         // 			total_tax = (sub_total - total_discount) * 0.18;
                         //
