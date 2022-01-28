@@ -1,0 +1,155 @@
+void PackingList.bulkCreateInvoices(Subform_for_Packing_List ids)
+{
+	// STEP-1: Store account ids in a list
+	ZBOOKS_URL = "https://books.zoho.com/app#/invoices/";
+	ORG_ID = "758488936";
+	account_ids = List();
+	for each  id in ids
+	{
+		if(id.Status != "Facturado")
+		{
+			account_ids.add(id.ZCRM_Account);
+		}
+	}
+	distinct_account_ids = account_ids.distinct();
+	// STEP-2: Store packing list rows data in a map, and then in a list
+	packing_list = List();
+	for each  id in ids
+	{
+		if(id.Status != "Facturado")
+		{
+			packing_row = Map();
+			row_data = Map();
+			rows_data = List();
+			packing_row.put("zcrm_account_id",id.ZCRM_Account);
+			row_data.put("zcrm_product_id",id.ZCRM_Product);
+			row_data.put("quantity",id.Quantity);
+			row_data.put("unit",id.Unit);
+			row_data.put("box_number",id.Box_Number);
+			row_data.put("comments",id.Comments);
+			row_data.put("_row_id",id);
+			rows_data.add(row_data);
+			packing_row.put("data",row_data);
+			packing_list.add(packing_row);
+		}
+	}
+	// STEP-3: Group the products per account/client
+	grouped_records = List();
+	for each  distinct_account_id in distinct_account_ids
+	{
+		grouped_row = Map();
+		grouped_items = List();
+		grouped_row.put("zcrm_account_id",distinct_account_id);
+		for each  item in packing_list
+		{
+			if(item.get("zcrm_account_id") == distinct_account_id)
+			{
+				grouped_items.add(item.get("data"));
+			}
+		}
+		grouped_row.put("items",grouped_items);
+		grouped_records.add(grouped_row);
+	}
+	// STEP-4: Invoice every Package List row in Zoho Books
+	for each  grouped_record in grouped_records
+	{
+		// STEP-4.1: Get Zoho Books Customer Id and map it
+		zbooks_invoice = Map();
+		zbooks_customer_id = "";
+		zbooks_pricebook_id = "";
+		zcrm_account_id = grouped_record.get("zcrm_account_id");
+		zbooks_customer_response = zoho.books.getRecords("Contacts",ORG_ID,"zcrm_account_id=" + zcrm_account_id,"zoho_books");
+		if(zbooks_customer_response.containKey("contacts"))
+		{
+			zbooks_customers = zbooks_customer_response.get("contacts");
+			if(zbooks_customers.size() > 0)
+			{
+				zbooks_customer = zbooks_customers.get(0);
+				zbooks_customer_id = zbooks_customer.toMap().get("contact_id");
+				zbooks_invoice.put("customer_id",zbooks_customer_id);
+			}
+		}
+		// STEP-4.2: Get Zoho Books Pricebook Id linked to Customer
+		if(zbooks_customer_id != "")
+		{
+			_zbooks_customer_response = zoho.books.getRecordsByID("contacts",ORG_ID,zbooks_customer_id,"zoho_books");
+			if(_zbooks_customer_response.get("code") == 0)
+			{
+				if(_zbooks_customer_response.containKey("contact"))
+				{
+					_zbooks_customer = _zbooks_customer_response.get("contact");
+					zbooks_pricebook_id = _zbooks_customer.get("pricebook_id");
+				}
+			}
+		}
+		// STEP-4.3: Get Zoho Books Product Id and map values
+		if(zbooks_customer_id != "")
+		{
+			line_items = List();
+			items = grouped_record.get("items");
+			for each  item in items
+			{
+				line_item = Map();
+				zcrm_product_id = item.get("zcrm_product_id");
+				zbooks_item_response = zoho.books.getRecords("items",ORG_ID,"zcrm_product_id=" + zcrm_product_id,"zoho_books");
+				if(zbooks_item_response.containKey("items"))
+				{
+					zbooks_items = zbooks_item_response.get("items");
+					if(zbooks_items.size() > 0)
+					{
+						ln_custom_fields = List();
+						zbooks_item = zbooks_items.get(0);
+						zbooks_item_id = zbooks_item.toMap().get("item_id");
+						line_item.put("item_id",zbooks_item_id);
+						line_item.put("unit",item.get("unit"));
+						line_item.put("quantity",item.get("quantity"));
+						line_item.put("pricebook_id",zbooks_pricebook_id);
+						ln_custom_fields.add({"label":"Caja","value":item.get("box_number").toNumber()});
+						ln_custom_fields.add({"label":"Comments","value":ifnull(item.get("comments"),"")});
+						line_item.put("item_custom_fields",ln_custom_fields);
+						line_items.add(line_item);
+					}
+				}
+			}
+			zbooks_invoice.put("line_items",line_items);
+		}
+		error = false;
+		rows = grouped_record.get("items");
+		// STEP-4.3: Create Invoice in Zoho Books, update to Facturado if success, Error if fails.
+		if(zbooks_customer_id != "" && zbooks_pricebook_id != "")
+		{
+			new_invoice_response = zoho.books.createRecord("invoices",ORG_ID,zbooks_invoice,"zoho_books");
+			// 			new_invoice_response = {"code":10,"invoice":""};
+			if(new_invoice_response.get("code") == 0)
+			{
+				if(new_invoice_response.containKey("invoice"))
+				{
+					new_invoice = new_invoice_response.get("invoice");
+					new_invoice_id = new_invoice.get("invoice_id");
+					openUrl(ZBOOKS_URL + new_invoice_id,"new window");
+					for each  row in rows
+					{
+						row_subform = Subform_for_Packing_List[ID == row.get("_row_id")];
+						row_subform.Status="Facturado";
+					}
+				}
+			}
+			else
+			{
+				error = true;
+			}
+		}
+		else
+		{
+			error = true;
+		}
+		if(error)
+		{
+			for each  row in rows
+			{
+				row_subform = Subform_for_Packing_List[ID == row.get("_row_id")];
+				row_subform.Status="Error";
+			}
+		}
+	}
+}
