@@ -3,8 +3,8 @@ Map Enviar_a_Nubefact( Map invoice , Map organization , Map user ) {
     /*
     UTILS
     */
-    URL_NUBEFACT = "https://api.nubefact.com/api/v1/eff0fd43-3999-490a-a784-875ad272de19";
-    TOKEN_NUBEFACT = "[TOKEN]";
+    URL_NUBEFACT = "[URL_NUBEFACT]";
+    TOKEN_NUBEFACT = "[TOKEN_NUBEFACT]";
     ORG_ID = organization.get("organization_id");
     BOLETA = {"serie":"BBB1"};
     FACTURA = {"serie":"FFF1"};
