@@ -3,8 +3,8 @@ Map Facturaci_n_El_ctronica( Map invoice , Map organization , Map user ) {
   /*
    UTILS
   */
-  URL_NUBEFACT = "https://api.nubefact.com/api/v1/51f2c8de-dc13-4dcf-831a-3775177c6418";
-  TOKEN_NUBEFACT = "96175a56020e47b781ba61544caf85f9ad18c459651547c680fa08593e6d704a";
+  URL_NUBEFACT = [URL_NUBEFACT];
+  TOKEN_NUBEFACT = [TOKEN_NUBEFACT];
   ORG_ID = organization.get("organization_id");
   BOLETA = {"serie":"BBB1"};
   FACTURA = {"serie":"FFF1"};
